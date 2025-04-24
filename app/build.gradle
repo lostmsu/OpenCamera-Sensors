@@ -1,21 +1,22 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 29
+    namespace 'net.sourceforge.opencamera'
+    compileSdkVersion 35
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
     }
     compileOptions.encoding = 'UTF-8'
 
     defaultConfig {
         applicationId "com.opencamera_sensors.app"
-        minSdkVersion 19
+        minSdkVersion 21
         // Important! When we decide to change this to 30 or more, we need to add full support for scoped storage
+        //noinspection ExpiredTargetSdkVersion
         targetSdkVersion 29
 
         renderscriptTargetApi 21
-        //renderscriptSupportModeEnabled true // don't use support library as it bloats the APK, and we don't need pre-4.4 support
         // need build tools at least 20 at least to support ScriptIntrinsicHistogram
         // also need build tools at least 21 to avoid Google Play 64-bit warning (required from 1 August 2019)
 
@@ -43,10 +44,6 @@ android {
         }
     }
 
-    lintOptions {
-        abortOnError false
-        checkReleaseBuilds false
-    }
 
     testOptions {
         unitTests.returnDefaultValues = true
@@ -63,13 +60,16 @@ android {
     // see https://developer.android.com/training/testing/set-up-project
     useLibrary 'android.test.runner'
     useLibrary 'android.test.base'
-    buildToolsVersion '28.0.3'
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
     //useLibrary 'android.test.mock'
 }
 
 dependencies {
-    testImplementation 'junit:junit:4.12'
+    testImplementation 'junit:junit:4.13.1'
     implementation 'androidx.legacy:legacy-support-v4:1.0.0'
-    implementation 'androidx.exifinterface:exifinterface:1.3.1'
+    implementation 'androidx.exifinterface:exifinterface:1.4.1'
     testImplementation 'junit:junit:4.13.1'
 }

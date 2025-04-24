@@ -2287,6 +2287,8 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                 }
                 catch(RuntimeException ex) {
                     // ignore
+                } catch (IOException e) {
+                    // ignore
                 }
                 try {
                     if( pfd_saf != null ) {
@@ -3204,7 +3206,6 @@ public class MyApplicationInterface extends BasicApplicationInterface {
                 }
 
                 imageSaver.startImageBatch(true,
-                        photo_mode == PhotoMode.NoiseReduction ? ImageSaver.Request.ProcessType.AVERAGE : ImageSaver.Request.ProcessType.PANORAMA,
                         save_base,
                         image_capture_intent, image_capture_intent_uri,
                         using_camera2,
@@ -3560,14 +3561,6 @@ public class MyApplicationInterface extends BasicApplicationInterface {
 
     boolean hasThumbnailAnimation() {
         return this.drawPreview.hasThumbnailAnimation();
-    }
-
-    public HDRProcessor getHDRProcessor() {
-        return imageSaver.getHDRProcessor();
-    }
-
-    public PanoramaProcessor getPanoramaProcessor() {
-        return imageSaver.getPanoramaProcessor();
     }
 
     public boolean test_set_available_memory = false;

@@ -60,8 +60,6 @@ public class ImageSaver extends Thread {
     private final Paint p = new Paint();
 
     private final MainActivity main_activity;
-    private final HDRProcessor hdrProcessor;
-    private final PanoramaProcessor panoramaProcessor;
 
     /* We use a separate count n_images_to_save, rather than just relying on the queue size, so we can take() an image from queue,
      * but only decrement the count when we've finished saving the image.
@@ -100,13 +98,6 @@ public class ImageSaver extends Thread {
             DUMMY
         }
         final Type type;
-        enum ProcessType {
-            NORMAL,
-            HDR,
-            AVERAGE,
-            PANORAMA
-        }
-        final ProcessType process_type; // for type==JPEG
         final boolean force_suffix; // affects filename suffixes for saving jpeg_images: if true, filenames will always be appended with a suffix like _0, even if there's only 1 image in jpeg_images
         final int suffix_offset; // affects filename suffixes for saving jpeg_images, when force_suffix is true or there are multiple images in jpeg_images: the suffixes will be offset by this number
         enum SaveBase {
@@ -170,7 +161,6 @@ public class ImageSaver extends Thread {
         final int sample_factor; // sampling factor for thumbnail, higher means lower quality
 
         Request(Type type,
-                ProcessType process_type,
                 boolean force_suffix,
                 int suffix_offset,
                 SaveBase save_base,
@@ -195,7 +185,6 @@ public class ImageSaver extends Thread {
                 String custom_tag_copyright,
                 int sample_factor) {
             this.type = type;
-            this.process_type = process_type;
             this.force_suffix = force_suffix;
             this.suffix_offset = suffix_offset;
             this.save_base = save_base;
@@ -243,7 +232,6 @@ public class ImageSaver extends Thread {
          */
         Request copy() {
             return new Request(this.type,
-                    this.process_type,
                     this.force_suffix,
                     this.suffix_offset,
                     this.save_base,
@@ -277,9 +265,6 @@ public class ImageSaver extends Thread {
         ActivityManager activityManager = (ActivityManager) main_activity.getSystemService(Activity.ACTIVITY_SERVICE);
         this.queue_capacity = computeQueueSize(activityManager.getLargeMemoryClass());
         this.queue = new ArrayBlockingQueue<>(queue_capacity); // since we remove from the queue and then process in the saver thread, in practice the number of background photos - including the one being processed - is one more than the length of this queue
-
-        this.hdrProcessor = new HDRProcessor(main_activity, main_activity.is_test);
-        this.panoramaProcessor = new PanoramaProcessor(main_activity, hdrProcessor);
 
         p.setAntiAlias(true);
     }
@@ -460,12 +445,6 @@ public class ImageSaver extends Thread {
     void onDestroy() {
         if( MyDebug.LOG )
             Log.d(TAG, "onDestroy");
-        if( panoramaProcessor != null ) {
-            panoramaProcessor.onDestroy();
-        }
-        if( hdrProcessor != null ) {
-            hdrProcessor.onDestroy();
-        }
     }
 
     @Override
@@ -655,7 +634,6 @@ public class ImageSaver extends Thread {
      *  processType AVERAGE and PANORAMA.
      */
     void startImageBatch(boolean do_in_background,
-                           Request.ProcessType processType,
                            Request.SaveBase save_base,
                            boolean image_capture_intent, Uri image_capture_intent_uri,
                            boolean using_camera2,
@@ -679,7 +657,6 @@ public class ImageSaver extends Thread {
             Log.d(TAG, "do_in_background? " + do_in_background);
         }
         pending_image_average_request = new Request(Request.Type.JPEG,
-                processType,
                 false,
                 0,
                 save_base,
@@ -791,7 +768,6 @@ public class ImageSaver extends Thread {
         //do_in_background = false;
 
         Request request = new Request(is_raw ? Request.Type.RAW : Request.Type.JPEG,
-                is_hdr ? Request.ProcessType.HDR : Request.ProcessType.NORMAL,
                 force_suffix,
                 suffix_offset,
                 save_expo ? Request.SaveBase.SAVEBASE_ALL : Request.SaveBase.SAVEBASE_NONE,
@@ -902,7 +878,6 @@ public class ImageSaver extends Thread {
 
     private void addDummyRequest() {
         Request dummy_request = new Request(Request.Type.DUMMY,
-                Request.ProcessType.NORMAL,
                 false,
                 0,
                 Request.SaveBase.SAVEBASE_NONE,
@@ -1310,463 +1285,10 @@ public class ImageSaver extends Thread {
             throw new RuntimeException();
         }
 
-        boolean success;
-        if( request.process_type == Request.ProcessType.AVERAGE ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "average");
-
-            saveBaseImages(request, "_");
-            main_activity.savingImage(true);
-
-			/*List<Bitmap> bitmaps = loadBitmaps(request.jpeg_images, 0);
-			if (bitmaps == null) {
-				if (MyDebug.LOG)
-					Log.e(TAG, "failed to load bitmaps");
-				main_activity.savingImage(false);
-				return false;
-			}*/
-			/*Bitmap nr_bitmap = loadBitmap(request.jpeg_images.get(0), true);
-
-			if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ) {
-				try {
-					for(int i = 1; i < request.jpeg_images.size(); i++) {
-						Log.d(TAG, "processAvg for image: " + i);
-						Bitmap new_bitmap = loadBitmap(request.jpeg_images.get(i), false);
-						float avg_factor = (float) i;
-						hdrProcessor.processAvg(nr_bitmap, new_bitmap, avg_factor, true);
-						// processAvg recycles new_bitmap
-					}
-					//hdrProcessor.processAvgMulti(bitmaps, hdr_strength, 4);
-					//hdrProcessor.avgBrighten(nr_bitmap);
-				}
-				catch(HDRProcessorException e) {
-					e.printStackTrace();
-					throw new RuntimeException();
-				}
-			}
-			else {
-				Log.e(TAG, "shouldn't have offered NoiseReduction as an option if not on Android 5");
-				throw new RuntimeException();
-			}*/
-            Bitmap nr_bitmap;
-            if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ) {
-                try {
-                    long time_s = System.currentTimeMillis();
-                    // initialise allocation from first two bitmaps
-                    //int inSampleSize = hdrProcessor.getAvgSampleSize(request.jpeg_images.size());
-                    int inSampleSize = hdrProcessor.getAvgSampleSize(request.iso);
-                    //final boolean use_smp = false;
-                    final boolean use_smp = true;
-                    // n_smp_images is how many bitmaps to decompress at once if use_smp==true. Beware of setting too high -
-                    // e.g., storing 4 16MP bitmaps takes 256MB of heap (NR requires at least 512MB large heap); also need to make
-                    // sure there isn't a knock on effect on performance
-                    //final int n_smp_images = 2;
-                    final int n_smp_images = 4;
-                    long this_time_s = System.currentTimeMillis();
-                    List<Bitmap> bitmaps = null;
-                    Bitmap bitmap0, bitmap1;
-                    if( use_smp ) {
-						/*List<byte []> sub_jpeg_list = new ArrayList<>();
-						sub_jpeg_list.add(request.jpeg_images.get(0));
-						sub_jpeg_list.add(request.jpeg_images.get(1));
-						bitmaps = loadBitmaps(sub_jpeg_list, -1, inSampleSize);
-						bitmap0 = bitmaps.get(0);
-						bitmap1 = bitmaps.get(1);*/
-                        int n_remaining = request.jpeg_images.size();
-                        int n_load = Math.min(n_smp_images, n_remaining);
-                        if( MyDebug.LOG ) {
-                            Log.d(TAG, "n_remaining: " + n_remaining);
-                            Log.d(TAG, "n_load: " + n_load);
-                        }
-                        List<byte []> sub_jpeg_list = new ArrayList<>();
-                        for(int j=0;j<n_load;j++) {
-                            sub_jpeg_list.add(request.jpeg_images.get(j));
-                        }
-                        bitmaps = loadBitmaps(sub_jpeg_list, -1, inSampleSize);
-                        if( MyDebug.LOG )
-                            Log.d(TAG, "length of bitmaps list is now: " + bitmaps.size());
-                        bitmap0 = bitmaps.get(0);
-                        bitmap1 = bitmaps.get(1);
-                    }
-                    else {
-                        bitmap0 = loadBitmap(request.jpeg_images.get(0), false, inSampleSize);
-                        bitmap1 = loadBitmap(request.jpeg_images.get(1), false, inSampleSize);
-                    }
-                    if( MyDebug.LOG ) {
-                        Log.d(TAG, "*** time for loading first bitmaps: " + (System.currentTimeMillis() - this_time_s));
-                    }
-                    int width = bitmap0.getWidth();
-                    int height = bitmap0.getHeight();
-                    float avg_factor = 1.0f;
-                    this_time_s = System.currentTimeMillis();
-                    HDRProcessor.AvgData avg_data = hdrProcessor.processAvg(bitmap0, bitmap1, avg_factor, request.iso, request.zoom_factor);
-                    if( bitmaps != null ) {
-                        bitmaps.set(0, null);
-                        bitmaps.set(1, null);
-                    }
-                    if( MyDebug.LOG ) {
-                        Log.d(TAG, "*** time for processing first two bitmaps: " + (System.currentTimeMillis() - this_time_s));
-                    }
-                    Allocation allocation = avg_data.allocation_out;
-
-                    for(int i=2;i<request.jpeg_images.size();i++) {
-                        if( MyDebug.LOG )
-                            Log.d(TAG, "processAvg for image: " + i);
-
-                        this_time_s = System.currentTimeMillis();
-                        Bitmap new_bitmap;
-                        if( use_smp ) {
-                            // check if we already loaded the bitmap
-                            if( MyDebug.LOG )
-                                Log.d(TAG, "length of bitmaps list: " + bitmaps.size());
-                            if( i < bitmaps.size() ) {
-                                if( MyDebug.LOG ) {
-                                    Log.d(TAG, "already loaded bitmap from previous iteration with SMP");
-                                }
-                                new_bitmap = bitmaps.get(i);
-                            }
-                            else {
-                                int n_remaining = request.jpeg_images.size() - i;
-                                int n_load = Math.min(n_smp_images, n_remaining);
-                                if( MyDebug.LOG ) {
-                                    Log.d(TAG, "n_remaining: " + n_remaining);
-                                    Log.d(TAG, "n_load: " + n_load);
-                                }
-                                List<byte []> sub_jpeg_list = new ArrayList<>();
-                                for(int j=i;j<i+n_load;j++) {
-                                    sub_jpeg_list.add(request.jpeg_images.get(j));
-                                }
-                                List<Bitmap> new_bitmaps = loadBitmaps(sub_jpeg_list, -1, inSampleSize);
-                                bitmaps.addAll(new_bitmaps);
-                                if( MyDebug.LOG )
-                                    Log.d(TAG, "length of bitmaps list is now: " + bitmaps.size());
-                                new_bitmap = bitmaps.get(i);
-                            }
-                        }
-                        else {
-                            new_bitmap = loadBitmap(request.jpeg_images.get(i), false, inSampleSize);
-                        }
-                        if( MyDebug.LOG ) {
-                            Log.d(TAG, "*** time for loading extra bitmap: " + (System.currentTimeMillis() - this_time_s));
-                        }
-                        avg_factor = (float)i;
-                        this_time_s = System.currentTimeMillis();
-                        hdrProcessor.updateAvg(avg_data, width, height, new_bitmap, avg_factor, request.iso, request.zoom_factor);
-                        // updateAvg recycles new_bitmap
-                        if( bitmaps != null ) {
-                            bitmaps.set(i, null);
-                        }
-                        if( MyDebug.LOG ) {
-                            Log.d(TAG, "*** time for updating extra bitmap: " + (System.currentTimeMillis() - this_time_s));
-                        }
-                    }
-
-                    this_time_s = System.currentTimeMillis();
-                    nr_bitmap = hdrProcessor.avgBrighten(allocation, width, height, request.iso, request.exposure_time);
-                    if( MyDebug.LOG ) {
-                        Log.d(TAG, "*** time for brighten: " + (System.currentTimeMillis() - this_time_s));
-                    }
-                    avg_data.destroy();
-                    //noinspection UnusedAssignment
-                    avg_data = null;
-                    if( MyDebug.LOG ) {
-                        Log.d(TAG, "*** total time for saving NR image: " + (System.currentTimeMillis() - time_s));
-                    }
-                }
-                catch(HDRProcessorException e) {
-                    e.printStackTrace();
-                    throw new RuntimeException();
-                }
-            }
-            else {
-                Log.e(TAG, "shouldn't have offered NoiseReduction as an option if not on Android 5");
-                throw new RuntimeException();
-            }
-
-            if( MyDebug.LOG )
-                Log.d(TAG, "nr_bitmap: " + nr_bitmap + " is mutable? " + nr_bitmap.isMutable());
-            System.gc();
-            main_activity.savingImage(false);
-
-            if( MyDebug.LOG )
-                Log.d(TAG, "save NR image");
-            String suffix = "_NR";
-            success = saveSingleImageNow(request, request.jpeg_images.get(0), nr_bitmap, suffix, true, true, true, false);
-            if( MyDebug.LOG && !success )
-                Log.e(TAG, "saveSingleImageNow failed for nr image");
-            nr_bitmap.recycle();
-            System.gc();
-        }
-        else if( request.process_type == Request.ProcessType.HDR ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "hdr");
-            if( request.jpeg_images.size() != 1 && request.jpeg_images.size() != 3 ) {
-                if( MyDebug.LOG )
-                    Log.d(TAG, "saveImageNow expected either 1 or 3 images for hdr, not " + request.jpeg_images.size());
-                // throw runtime exception, as this is a programming error
-                throw new RuntimeException();
-            }
-
-            long time_s = System.currentTimeMillis();
-            if( request.jpeg_images.size() > 1 ) {
-                // if there's only 1 image, we're in DRO mode, and shouldn't save the base image
-                // note that in earlier Open Camera versions, we used "_EXP" as the suffix. We now use just "_" from 1.42 onwards, so Google
-                // Photos will group them together. (Unfortunately using "_EXP_" doesn't work, the images aren't grouped!)
-                saveBaseImages(request, "_");
-                if( MyDebug.LOG ) {
-                    Log.d(TAG, "HDR performance: time after saving base exposures: " + (System.currentTimeMillis() - time_s));
-                }
-            }
-
-            // note, even if we failed saving some of the expo images, still try to save the HDR image
-            if( MyDebug.LOG )
-                Log.d(TAG, "create HDR image");
-            main_activity.savingImage(true);
-
-            // see documentation for HDRProcessor.processHDR() - because we're using release_bitmaps==true, we need to make sure that
-            // the bitmap that will hold the output HDR image is mutable (in case of options like photo stamp)
-            // see test testTakePhotoHDRPhotoStamp.
-            int base_bitmap = (request.jpeg_images.size()-1)/2;
-            if( MyDebug.LOG )
-                Log.d(TAG, "base_bitmap: " + base_bitmap);
-            List<Bitmap> bitmaps = loadBitmaps(request.jpeg_images, base_bitmap, 1);
-            if( bitmaps == null ) {
-                if( MyDebug.LOG )
-                    Log.e(TAG, "failed to load bitmaps");
-                main_activity.savingImage(false);
-                return false;
-            }
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "HDR performance: time after decompressing base exposures: " + (System.currentTimeMillis() - time_s));
-            }
-            float hdr_alpha = getHDRAlpha(request.preference_hdr_contrast_enhancement, request.exposure_time, bitmaps.size());
-            if( MyDebug.LOG )
-                Log.d(TAG, "before HDR first bitmap: " + bitmaps.get(0) + " is mutable? " + bitmaps.get(0).isMutable());
-            try {
-                if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ) {
-                    hdrProcessor.processHDR(bitmaps, true, null, true, null, hdr_alpha, 4, true, HDRProcessor.TonemappingAlgorithm.TONEMAPALGORITHM_REINHARD, HDRProcessor.DROTonemappingAlgorithm.DROALGORITHM_GAINGAMMA); // this will recycle all the bitmaps except bitmaps.get(0), which will contain the hdr image
-                }
-                else {
-                    Log.e(TAG, "shouldn't have offered HDR as an option if not on Android 5");
-                    throw new RuntimeException();
-                }
-            }
-            catch(HDRProcessorException e) {
-                Log.e(TAG, "HDRProcessorException from processHDR: " + e.getCode());
-                e.printStackTrace();
-                if( e.getCode() == HDRProcessorException.UNEQUAL_SIZES ) {
-                    // this can happen on OnePlus 3T with old camera API with front camera, seems to be a bug that resolution changes when exposure compensation is set!
-                    main_activity.getPreview().showToast(null, R.string.failed_to_process_hdr);
-                    Log.e(TAG, "UNEQUAL_SIZES");
-                    bitmaps.clear();
-                    System.gc();
-                    main_activity.savingImage(false);
-                    return false;
-                }
-                else {
-                    // throw RuntimeException, as we shouldn't ever get the error INVALID_N_IMAGES, if we do it's a programming error
-                    throw new RuntimeException();
-                }
-            }
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "HDR performance: time after creating HDR image: " + (System.currentTimeMillis() - time_s));
-            }
-            if( MyDebug.LOG )
-                Log.d(TAG, "after HDR first bitmap: " + bitmaps.get(0) + " is mutable? " + bitmaps.get(0).isMutable());
-            Bitmap hdr_bitmap = bitmaps.get(0);
-            if( MyDebug.LOG )
-                Log.d(TAG, "hdr_bitmap: " + hdr_bitmap + " is mutable? " + hdr_bitmap.isMutable());
-            bitmaps.clear();
-            System.gc();
-            main_activity.savingImage(false);
-
-            if( MyDebug.LOG )
-                Log.d(TAG, "save HDR image");
-            int base_image_id = ((request.jpeg_images.size()-1)/2);
-            if( MyDebug.LOG )
-                Log.d(TAG, "base_image_id: " + base_image_id);
-            String suffix = request.jpeg_images.size() == 1 ? "_DRO" : "_HDR";
-            success = saveSingleImageNow(request, request.jpeg_images.get(base_image_id), hdr_bitmap, suffix, true, true, true, false);
-            if( MyDebug.LOG && !success )
-                Log.e(TAG, "saveSingleImageNow failed for hdr image");
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "HDR performance: time after saving HDR image: " + (System.currentTimeMillis() - time_s));
-            }
-            hdr_bitmap.recycle();
-            System.gc();
-        }
-        else if( request.process_type == Request.ProcessType.PANORAMA ) {
-            if( MyDebug.LOG )
-                Log.d(TAG, "panorama");
-
-            // save text file with gyro info
-            if( !request.image_capture_intent && request.save_base == Request.SaveBase.SAVEBASE_ALL_PLUS_DEBUG ) {
-				/*final StringBuilder gyro_text = new StringBuilder();
-				gyro_text.append("Panorama gyro debug info\n");
-				gyro_text.append("n images: " + request.gyro_rotation_matrix.size() + ":\n");
-
-				float [] inVector = new float[3];
-				float [] outVector = new float[3];
-				for(int i=0;i<request.gyro_rotation_matrix.size();i++) {
-					gyro_text.append("Image " + i + ":\n");
-
-					GyroSensor.setVector(inVector, 1.0f, 0.0f, 0.0f); // vector pointing in "right" direction
-					GyroSensor.transformVector(outVector, request.gyro_rotation_matrix.get(i), inVector);
-					gyro_text.append("    X: " + outVector[0] + " , " + outVector[1] + " , " + outVector[2] + "\n");
-
-					GyroSensor.setVector(inVector, 0.0f, 1.0f, 0.0f); // vector pointing in "up" direction
-					GyroSensor.transformVector(outVector, request.gyro_rotation_matrix.get(i), inVector);
-					gyro_text.append("    Y: " + outVector[0] + " , " + outVector[1] + " , " + outVector[2] + "\n");
-
-					GyroSensor.setVector(inVector, 0.0f, 0.0f, -1.0f); // vector pointing behind the device's screen
-					GyroSensor.transformVector(outVector, request.gyro_rotation_matrix.get(i), inVector);
-					gyro_text.append("    -Z: " + outVector[0] + " , " + outVector[1] + " , " + outVector[2] + "\n");
-
-				}*/
-
-                try {
-                    StringWriter writer = new StringWriter();
-
-                    writeGyroDebugXml(writer, request);
-
-                    StorageUtils storageUtils = main_activity.getStorageUtils();
-                    /*File saveFile = null;
-					Uri saveUri = null;
-					if( storageUtils.isUsingSAF() ) {
-						saveUri = storageUtils.createOutputMediaFileSAF(StorageUtils.MEDIA_TYPE_GYRO_INFO, "", "xml", request.current_date);
-					}
-					else {
-                        saveFile = storageUtils.createOutputMediaFile(StorageUtils.MEDIA_TYPE_GYRO_INFO, "", "xml", request.current_date);
-                        if( MyDebug.LOG )
-                            Log.d(TAG, "save to: " + saveFile.getAbsolutePath());
-                    }*/
-					// We save to the application specific folder so this works on Android 10 with scoped storage, without having to
-                    // rewrite the non-SAF codepath to use MediaStore API (which would also have problems that the gyro debug files would
-                    // show up in the MediaStore, hence gallery applications!)
-                    // We use this for older Android versions for consistency, plus not a bad idea of to have debug files in the application
-                    // folder anyway.
-                    File saveFile = storageUtils.createOutputMediaFile(main_activity.getExternalFilesDir(null), StorageUtils.MEDIA_TYPE_GYRO_INFO, "", "xml", request.current_date);
-                    Uri saveUri = null;
-                    if( MyDebug.LOG )
-                        Log.d(TAG, "save to: " + saveFile.getAbsolutePath());
-
-                    OutputStream outputStream;
-                    if( saveFile != null )
-                        outputStream = new FileOutputStream(saveFile);
-                    else
-                        outputStream = main_activity.getContentResolver().openOutputStream(saveUri);
-                    try {
-                        //outputStream.write(gyro_text.toString().getBytes());
-                        //noinspection CharsetObjectCanBeUsed
-                        outputStream.write(writer.toString().getBytes(Charset.forName("UTF-8")));
-                    }
-                    finally {
-                        outputStream.close();
-                    }
-
-                    if( saveFile != null ) {
-                        storageUtils.broadcastFile(saveFile, false, false, false);
-                    }
-                    else {
-                        broadcastSAFFile(saveUri, false);
-                    }
-                }
-                catch(IOException e) {
-                    Log.e(TAG, "failed to write gyro text file");
-                    e.printStackTrace();
-                }
-            }
-
-            // for now, just save all the images:
-            //String suffix = "_";
-            //success = saveImages(request, suffix, false, true, true);
-
-			saveBaseImages(request, "_");
-
-			main_activity.savingImage(true);
-
-            long time_s = System.currentTimeMillis();
-
-            if( MyDebug.LOG )
-                Log.d(TAG, "panorama_dir_left_to_right: " + request.panorama_dir_left_to_right);
-            if( !request.panorama_dir_left_to_right ) {
-                Collections.reverse(request.jpeg_images);
-                // shouldn't use gyro_rotation_matrix from this point, but keep in sync with jpeg_images just in case
-                Collections.reverse(request.gyro_rotation_matrix);
-            }
-
-            List<Bitmap> bitmaps = loadBitmaps(request.jpeg_images, -1, 1);
-            if( bitmaps == null ) {
-                if( MyDebug.LOG )
-                    Log.e(TAG, "failed to load bitmaps");
-                main_activity.savingImage(false);
-                return false;
-            }
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "panorama performance: time after decompressing base exposures: " + (System.currentTimeMillis() - time_s));
-            }
-
-            // rotate the bitmaps if necessary for exif tags
-            for(int i=0;i<bitmaps.size();i++) {
-                Bitmap bitmap = bitmaps.get(i);
-                bitmap = rotateForExif(bitmap, request.jpeg_images.get(0));
-                bitmaps.set(i, bitmap);
-            }
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "panorama performance: time after rotating for exif: " + (System.currentTimeMillis() - time_s));
-            }
-
-            Bitmap panorama;
-            try {
-                if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP ) {
-                    panorama = panoramaProcessor.panorama(bitmaps, MyApplicationInterface.getPanoramaPicsPerScreen(), request.camera_view_angle_y, request.panorama_crop);
-                }
-                else {
-                    Log.e(TAG, "shouldn't have offered panorama as an option if not on Android 5");
-                    throw new RuntimeException();
-                }
-            }
-            catch(PanoramaProcessorException e) {
-                Log.e(TAG, "PanoramaProcessorException from panorama: " + e.getCode());
-                e.printStackTrace();
-                if( e.getCode() == PanoramaProcessorException.UNEQUAL_SIZES || e.getCode() == PanoramaProcessorException.FAILED_TO_CROP ) {
-                    main_activity.getPreview().showToast(null, R.string.failed_to_process_panorama);
-                    Log.e(TAG, "panorama failed: " + e.getCode());
-                    bitmaps.clear();
-                    System.gc();
-                    main_activity.savingImage(false);
-                    return false;
-                }
-                else {
-                    // throw RuntimeException, as we shouldn't ever get the error INVALID_N_IMAGES, if we do it's a programming error
-                    throw new RuntimeException();
-                }
-            }
-            if( MyDebug.LOG ) {
-                Log.d(TAG, "panorama performance: time after creating panorama image: " + (System.currentTimeMillis() - time_s));
-            }
-            if( MyDebug.LOG )
-                Log.d(TAG, "panorama: " + panorama);
-            bitmaps.clear();
-            System.gc();
-
-			main_activity.savingImage(false);
-
-            if( MyDebug.LOG )
-                Log.d(TAG, "save panorama image");
-            String suffix = "_PANO";
-            success = saveSingleImageNow(request, request.jpeg_images.get(0), panorama, suffix, true, true, true, true);
-            if( MyDebug.LOG && !success )
-                Log.e(TAG, "saveSingleImageNow failed for panorama image");
-            panorama.recycle();
-            System.gc();
-        }
-        else {
-            // see note above how we used to use "_EXP" for the suffix for multiple images
-            //String suffix = "_EXP";
-            String suffix = "_";
-            success = saveImages(request, suffix, false, true, true);
-        }
+        // see note above how we used to use "_EXP" for the suffix for multiple images
+        //String suffix = "_EXP";
+        String suffix = "_";
+        boolean success = saveImages(request, suffix, false, true, true);
 
         return success;
     }
@@ -1811,22 +1333,6 @@ public class ImageSaver extends Thread {
                 Log.d(TAG, "save base images");
 
             Request base_request = request;
-            if( request.process_type == Request.ProcessType.PANORAMA ) {
-                // Important to save base images for panorama in PNG format, to avoid risk of not being able to reproduce the
-                // same issue - decompressing JPEGs can vary between devices!
-                // Also disable options that don't really make sense for base panorama images.
-                base_request = request.copy();
-                base_request.image_format = Request.ImageFormat.PNG;
-                base_request.preference_stamp = "preference_stamp_no";
-                base_request.preference_textstamp = "";
-                base_request.do_auto_stabilise = false;
-                base_request.mirror = false;
-            }
-            else if( request.process_type == Request.ProcessType.AVERAGE ) {
-                // In case the base image needs to be postprocessed, we still want to save base images for NR at the 100% JPEG quality
-                base_request = request.copy();
-                base_request.image_quality = 100;
-            }
             // don't update the thumbnails, only do this for the final image - so user doesn't think it's complete, click gallery, then wonder why the final image isn't there
             // also don't mark these images as being shared
             saveImages(base_request, suffix, base_request.save_base == Request.SaveBase.SAVEBASE_FIRST, false, false);
@@ -3575,15 +3081,5 @@ public class ImageSaver extends Thread {
             return store_location;
         }
         return false;
-    }
-
-    // for testing:
-
-    HDRProcessor getHDRProcessor() {
-        return hdrProcessor;
-    }
-
-    public PanoramaProcessor getPanoramaProcessor() {
-        return panoramaProcessor;
     }
 }

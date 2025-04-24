@@ -95,12 +95,6 @@ public class DrawPreview {
     private int ghost_image_alpha;
     private boolean want_histogram;
     private Preview.HistogramType histogram_type;
-    private boolean want_zebra_stripes;
-    private int zebra_stripes_threshold;
-    private int zebra_stripes_color_foreground;
-    private int zebra_stripes_color_background;
-    private boolean want_focus_peaking;
-    private int focus_peaking_color_pref;
 
     // avoid doing things that allocate memory every frame!
     private final Paint p = new Paint();
@@ -636,28 +630,6 @@ public class DrawPreview {
                     break;
             }
         }
-
-        String zebra_stripes_value = sharedPreferences.getString(PreferenceKeys.ZebraStripesPreferenceKey, "0");
-        try {
-            zebra_stripes_threshold = Integer.parseInt(zebra_stripes_value);
-        }
-        catch(NumberFormatException e) {
-            if( MyDebug.LOG )
-                Log.e(TAG, "failed to parse zebra_stripes_value: " + zebra_stripes_value);
-            e.printStackTrace();
-            zebra_stripes_threshold = 0;
-        }
-        want_zebra_stripes = zebra_stripes_threshold != 0 & main_activity.supportsPreviewBitmaps();
-
-        String zebra_stripes_color_foreground_value = sharedPreferences.getString(PreferenceKeys.ZebraStripesForegroundColorPreferenceKey, "#ff000000");
-        zebra_stripes_color_foreground = Color.parseColor(zebra_stripes_color_foreground_value);
-        String zebra_stripes_color_background_value = sharedPreferences.getString(PreferenceKeys.ZebraStripesBackgroundColorPreferenceKey, "#ffffffff");
-        zebra_stripes_color_background = Color.parseColor(zebra_stripes_color_background_value);
-
-        String focus_peaking_pref = sharedPreferences.getString(PreferenceKeys.FocusPeakingPreferenceKey, "preference_focus_peaking_off");
-        want_focus_peaking = !focus_peaking_pref.equals("preference_focus_peaking_off") && main_activity.supportsPreviewBitmaps();
-        String focus_peaking_color = sharedPreferences.getString(PreferenceKeys.FocusPeakingColorPreferenceKey, "#ffffff");
-        focus_peaking_color_pref = Color.parseColor(focus_peaking_color);
 
         last_camera_id_time = 0; // in case camera id changed
         last_view_angles_time = 0; // force view angles to be recomputed
@@ -2551,7 +2523,7 @@ public class DrawPreview {
         final long time_ms = System.currentTimeMillis();
 
         // set up preview bitmaps (histogram etc)
-        boolean want_preview_bitmap = want_histogram || want_zebra_stripes || want_focus_peaking;
+        boolean want_preview_bitmap = want_histogram;
         if( want_preview_bitmap != preview.isPreviewBitmapEnabled() ) {
             if( want_preview_bitmap ) {
                 preview.enablePreviewBitmap();
@@ -2564,16 +2536,6 @@ public class DrawPreview {
                 preview.enableHistogram(histogram_type);
             else
                 preview.disableHistogram();
-
-            if( want_zebra_stripes )
-                preview.enableZebraStripes(zebra_stripes_threshold, zebra_stripes_color_foreground, zebra_stripes_color_background);
-            else
-                preview.disableZebraStripes();
-
-            if( want_focus_peaking )
-                preview.enableFocusPeaking();
-            else
-                preview.disableFocusPeaking();
         }
 
         // see documentation for CameraController.shouldCoverPreview()
@@ -2644,28 +2606,6 @@ public class DrawPreview {
         if( preview.isPreviewBitmapEnabled() ) {
             // draw additional real-time effects
 
-            // draw zebra stripes
-            Bitmap zebra_stripes_bitmap = preview.getZebraStripesBitmap();
-            if( zebra_stripes_bitmap != null ) {
-                setLastImageMatrix(canvas, zebra_stripes_bitmap, 0, false);
-                p.setAlpha(255);
-                canvas.drawBitmap(zebra_stripes_bitmap, last_image_matrix, p);
-            }
-
-            // draw focus peaking
-            Bitmap focus_peaking_bitmap = preview.getFocusPeakingBitmap();
-            if( focus_peaking_bitmap != null ) {
-                setLastImageMatrix(canvas, focus_peaking_bitmap, 0, false);
-                p.setAlpha(127);
-                if( focus_peaking_color_pref != Color.WHITE ) {
-                    p.setColorFilter(new PorterDuffColorFilter(focus_peaking_color_pref, PorterDuff.Mode.SRC_IN));
-                }
-                canvas.drawBitmap(focus_peaking_bitmap, last_image_matrix, p);
-                if( focus_peaking_color_pref != Color.WHITE ) {
-                    p.setColorFilter(null);
-                }
-                p.setAlpha(255);
-            }
         }
 
         doThumbnailAnimation(canvas, time_ms);

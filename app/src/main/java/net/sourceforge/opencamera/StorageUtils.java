@@ -28,6 +28,7 @@ import android.system.Os;
 import android.system.StructStatVfs;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
 import androidx.core.content.ContextCompat;
 
@@ -55,7 +56,7 @@ public class StorageUtils {
     public static final int MEDIA_TYPE_RAW_SENSOR_INFO = 5;
     public static final int MEDIA_TYPE_VIDEO_FRAME = 6;
 
-    private final Context context;
+    protected final Context context;
     private final MyApplicationInterface applicationInterface;
     private Uri last_media_scanned;
 
@@ -640,16 +641,7 @@ public class StorageUtils {
             index = "_" + count; // try to find a unique filename
         }
         SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context);
-        boolean useZuluTime = sharedPreferences.getString(PreferenceKeys.SaveZuluTimePreferenceKey, "local").equals("zulu");
-        String timeStamp;
-        if( useZuluTime ) {
-            SimpleDateFormat fmt = new SimpleDateFormat("yyyyMMdd_HHmmss'Z'", Locale.US);
-            fmt.setTimeZone(TimeZone.getTimeZone("UTC"));
-            timeStamp = fmt.format(current_date);
-        }
-        else {
-            timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(current_date);
-        }
+        String timeStamp = formatTimeStamp(current_date, sharedPreferences);
         String mediaFilename;
         switch (type) {
             case MEDIA_TYPE_GYRO_INFO: // gyro info files have same name as the photo (but different extension)
@@ -682,6 +674,19 @@ public class StorageUtils {
                 throw new RuntimeException();
         }
         return mediaFilename;
+    }
+
+    @NonNull
+    protected static String formatTimeStamp(Date current_date, SharedPreferences sharedPreferences) {
+        boolean useZuluTime = sharedPreferences.getString(PreferenceKeys.SaveZuluTimePreferenceKey, "local").equals("zulu");
+        if( useZuluTime ) {
+            SimpleDateFormat fmt = new SimpleDateFormat("yyyyMMdd_HHmmss'Z'", Locale.US);
+            fmt.setTimeZone(TimeZone.getTimeZone("UTC"));
+            return fmt.format(current_date);
+        }
+        else {
+            return new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(current_date);
+        }
     }
 
     // only valid if !isUsingSAF()

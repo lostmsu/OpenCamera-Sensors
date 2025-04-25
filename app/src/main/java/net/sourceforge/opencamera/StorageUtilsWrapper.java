@@ -2,9 +2,11 @@ package net.sourceforge.opencamera;
 
 import android.annotation.TargetApi;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
+import android.preference.PreferenceManager;
 import android.util.Log;
 
 import androidx.documentfile.provider.DocumentFile;
@@ -105,7 +107,8 @@ public class StorageUtilsWrapper extends StorageUtils {
     }
 
     private File getRawSensorInfoFolder(Date currentVideoDate) {
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(currentVideoDate);
+        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context);
+        String timeStamp = formatTimeStamp(currentVideoDate, sharedPreferences);
         return getImageFolderChild(timeStamp);
     }
 

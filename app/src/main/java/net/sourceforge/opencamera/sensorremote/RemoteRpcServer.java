@@ -42,6 +42,7 @@ public class RemoteRpcServer extends Thread {
     private static final String IMU_REQUEST_REGEX = "(imu\\?duration=)(\\d+)(&accel=)(\\d)(&gyro=)(\\d)(&magnetic=)(\\d)";
     private static final Pattern IMU_REQUEST_PATTERN = Pattern.compile(IMU_REQUEST_REGEX);
 
+    private final boolean ipPopup = false;
     private final Properties mConfig;
     private final RemoteRpcRequestHandler mRequestHandler;
     private volatile boolean mIsExecuting;
@@ -109,6 +110,9 @@ public class RemoteRpcServer extends Thread {
         // TODO: report hostname some other way
         mContext.runOnUiThread(
                 () -> {
+                    if (!this.ipPopup)
+                        return;
+
                     try {
                         new AlertDialog.Builder(mContext)
                                 .setTitle("Smartphone hostname")

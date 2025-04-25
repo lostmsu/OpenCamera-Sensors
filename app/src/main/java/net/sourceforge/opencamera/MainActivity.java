@@ -225,24 +225,25 @@ public class MainActivity extends Activity {
      */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
         int permissionCheckStorage = ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.WRITE_EXTERNAL_STORAGE);
         if (permissionCheckStorage != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions( MainActivity.this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, WRITE_EXTERNAL_STORAGE);
         }
+        boolean storageInaccessible = false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
                 && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE},
                     REQUEST_PERMISSION);
 
-            return;
+            storageInaccessible = true;
         }
         this.mRawSensorInfo = new RawSensorInfo(this);
         if (MyDebug.LOG) {
             Log.d(TAG, "Created RawSensorInfo object");
         }
 
-        onCreateInner(savedInstanceState);
-        super.onCreate(savedInstanceState);
+        onCreateInner(savedInstanceState, storageInaccessible);
     }
 
     public RawSensorInfo getRawSensorInfoManager() {
@@ -251,9 +252,11 @@ public class MainActivity extends Activity {
 
     /**
      * Inner onCreate() from Open Camera code, should be called in outer
+     *
      * @param savedInstanceState
+     * @param storageInaccessible
      */
-    private void onCreateInner(Bundle savedInstanceState) {
+    private void onCreateInner(Bundle savedInstanceState, boolean storageInaccessible) {
         long debug_time = 0;
         if( MyDebug.LOG ) {
             Log.d(TAG, "onCreate: " + this);
@@ -262,7 +265,6 @@ public class MainActivity extends Activity {
         activity_count++;
         if( MyDebug.LOG )
             Log.d(TAG, "activity_count: " + activity_count);
-        super.onCreate(savedInstanceState);
 
         // don't show orientation animations
         WindowManager.LayoutParams layout = getWindow().getAttributes();
@@ -5642,6 +5644,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (permissions.length == 0) {
+            return;
+        }
         if( MyDebug.LOG )
             Log.d(TAG, "onRequestPermissionsResult: requestCode " + requestCode);
         permissionHandler.onRequestPermissionsResult(requestCode, grantResults);

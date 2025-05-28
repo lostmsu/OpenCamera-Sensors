@@ -5886,7 +5886,7 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
                     if( MyDebug.LOG )
                         Log.d(TAG, "batteryCheckVideoTimerTask: battery level at: " + battery_frac);
 
-                    if( battery_frac <= 0.03 ) {
+                    if( battery_frac <= 0.08 ) {
                         if( MyDebug.LOG )
                             Log.d(TAG, "batteryCheckVideoTimerTask: battery at critical level, switching off video");
                         Activity activity = (Activity)Preview.this.getContext();

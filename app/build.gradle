@@ -2,7 +2,8 @@ apply plugin: 'com.android.application'
 
 android {
     namespace 'net.sourceforge.opencamera'
-    compileSdkVersion 35
+    compileSdkVersion 36
+    buildToolsVersion "36.1.0"
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
@@ -52,8 +53,7 @@ android {
 }
 
 dependencies {
-    testImplementation 'junit:junit:4.13.1'
+    testImplementation 'junit:junit:4.13.2'
     implementation 'androidx.legacy:legacy-support-v4:1.0.0'
-    implementation 'androidx.exifinterface:exifinterface:1.4.1'
-    testImplementation 'junit:junit:4.13.1'
+    implementation 'androidx.exifinterface:exifinterface:1.4.2'
 }

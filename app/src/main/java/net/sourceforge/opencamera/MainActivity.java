@@ -1230,6 +1230,13 @@ public class MainActivity extends Activity {
         // null from beneath applicationInterface.onDestroy()
         waitUntilImageQueueEmpty();
 
+        if( preview != null && preview.isVideoRecording() ) {
+            // normally recording is stopped when pausing with isFinishing()==true, but make sure we
+            // don't destroy the activity with the recorder still running (would corrupt the video file)
+            preview.stopVideo(false);
+        }
+        stopService(new Intent(this, RecordingService.class));
+
         preview.onDestroy();
         if( applicationInterface != null ) {
             applicationInterface.onDestroy();
@@ -1552,6 +1559,13 @@ public class MainActivity extends Activity {
         super.onPause(); // docs say to call this before freeing other things
         this.app_is_paused = true;
 
+        // if video recording is in progress, we keep the camera and recorder running whilst in the
+        // background - the RecordingService (foreground service with wakelock) keeps the process alive;
+        // but if the activity is actually finishing, we do want to stop recording and close the camera
+        final boolean continue_video_recording = preview.isVideoRecording() && !isFinishing();
+        if( MyDebug.LOG )
+            Log.d(TAG, "continue_video_recording: " + continue_video_recording);
+
         // clear RecSync related state
         if( applicationInterface.isSoftwareSyncRunning() ) {
             applicationInterface.getSoftwareSyncController().clearPeriodState();
@@ -1587,7 +1601,9 @@ public class MainActivity extends Activity {
         applicationInterface.clearLastImages(); // this should happen when pausing the preview, but call explicitly just to be safe
         applicationInterface.getDrawPreview().clearGhostImage();
         applicationInterface.stopSoftwareSync(); // should be called before preview pauses
-        preview.onPause();
+        if( !continue_video_recording ) {
+            preview.onPause();
+        }
 
         if( applicationInterface.getImageSaver().getNImagesToSave() > 0) {
             createImageSavingNotification();
@@ -3747,6 +3763,56 @@ public class MainActivity extends Activity {
             notificationManager.cancel(image_saving_notification_id);
             has_notification = false;
         }
+    }
+
+    /** Starts the foreground service (with notification and wakelock) that keeps video recording
+     *  alive whilst the app is in the background or the screen is off.
+     *  Called when video recording starts.
+     */
+    public void startVideoRecordingService() {
+        if( MyDebug.LOG )
+            Log.d(TAG, "startVideoRecordingService");
+        Intent intent = new Intent(this, RecordingService.class);
+        if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.O )
+            startForegroundService(intent);
+        else
+            startService(intent);
+    }
+
+    /** Stops the foreground service that keeps video recording alive in the background.
+     *  Called when video recording stops (or fails to start).
+     */
+    public void stopVideoRecordingService() {
+        if( MyDebug.LOG )
+            Log.d(TAG, "stopVideoRecordingService");
+        if( !app_is_paused ) {
+            // if this stop is part of a video restart (max duration/filesize), startedVideo() will simply start the service again
+            stopService(new Intent(this, RecordingService.class));
+            return;
+        }
+        // The app is in the background. This may be called from within Preview.stopVideo() as part
+        // of a video restart (max duration or filesize reached) - in that case the service must
+        // keep running: stopping it would release the wakelock, and with the screen off the
+        // restart might never complete. So check a bit later whether recording really stopped, and
+        // only then stop the service and close the camera (which we had kept open for background
+        // recording).
+        new Handler(getMainLooper()).postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if( preview.isVideoRecording() ) {
+                    // recording restarted - keep the service running
+                    if( MyDebug.LOG )
+                        Log.d(TAG, "video recording restarted, keep recording service");
+                    return;
+                }
+                if( MyDebug.LOG )
+                    Log.d(TAG, "stop recording service after video recording stopped in background");
+                stopService(new Intent(MainActivity.this, RecordingService.class));
+                if( app_is_paused ) {
+                    preview.onPause();
+                }
+            }
+        }, 3000);
     }
 
     public void clickedGallery(View view) {

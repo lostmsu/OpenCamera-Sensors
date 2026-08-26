@@ -159,6 +159,7 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
     private boolean app_is_paused = true; // whether activity is paused
     private boolean is_paused = true; // whether Preview.onPause() is called - note this could include the application pausing the preview, even if app_is_paused==false
     private boolean has_surface;
+    private SurfaceTexture background_recording_texture; // SurfaceTexture kept alive whilst video recording continues in the background (TextureView only)
     private boolean has_aspect_ratio;
     private double aspect_ratio;
     private final CameraControllerManager camera_controller_manager;
@@ -823,6 +824,13 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
         if( MyDebug.LOG )
             Log.d(TAG, "mySurfaceDestroyed");
         this.has_surface = false;
+        if( isVideoRecording() ) {
+            // don't close the camera, so that video recording continues whilst in the background
+            // (the camera is closed when recording stops, or when the activity really pauses/finishes)
+            if( MyDebug.LOG )
+                Log.d(TAG, "keep camera open for background video recording");
+            return;
+        }
         this.closeCamera(false, null);
     }
 
@@ -874,6 +882,20 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
         this.set_textureview_size = true;
         this.textureview_w = width;
         this.textureview_h = height;
+        if( background_recording_texture != null ) {
+            // We kept the camera running whilst in the background (video recording): reattach the
+            // SurfaceTexture that the camera still renders to, in place of the newly created one,
+            // so that the ongoing preview/recording shows up in the view again.
+            if( MyDebug.LOG )
+                Log.d(TAG, "reattach background recording surface texture");
+            if( background_recording_texture != arg0 ) {
+                TextureView texture_view = (TextureView)cameraSurface.getView();
+                texture_view.setSurfaceTexture(background_recording_texture);
+            }
+            background_recording_texture = null;
+            this.has_surface = true;
+            return;
+        }
         mySurfaceCreated();
     }
 
@@ -884,6 +906,17 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
         this.set_textureview_size = false;
         this.textureview_w = 0;
         this.textureview_h = 0;
+        if( isVideoRecording() ) {
+            // Keep the SurfaceTexture alive (by returning false, so that the TextureView doesn't
+            // release it) - the camera capture session still renders to it, so that video recording
+            // can continue whilst in the background. Reattached in onSurfaceTextureAvailable(), or
+            // released when the camera is closed.
+            if( MyDebug.LOG )
+                Log.d(TAG, "keep surface texture for background video recording");
+            background_recording_texture = arg0;
+            this.has_surface = false;
+            return false;
+        }
         mySurfaceDestroyed();
         return true;
     }
@@ -1404,7 +1437,14 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
             Log.d(TAG, "openCamera()");
             debug_time = System.currentTimeMillis();
         }
-        if( applicationInterface.isPreviewInBackground() ) {
+        if( camera_controller != null ) {
+            // this happens when the app is resumed whilst the camera was kept open for background
+            // video recording - nothing to do, the camera is still open and running
+            if( MyDebug.LOG )
+                Log.d(TAG, "don't open camera as camera is already open");
+            return;
+        }
+        else if( applicationInterface.isPreviewInBackground() ) {
             if( MyDebug.LOG )
                 Log.d(TAG, "don't open camera as preview in background");
             // note, even if the application never tries to reopen the camera in the background, we still need this check to avoid the camera
@@ -7450,7 +7490,18 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
         }
         //final boolean use_background_thread = false;
         final boolean use_background_thread = true;
-        this.closeCamera(use_background_thread, null);
+        // if we kept a SurfaceTexture alive for background video recording, it can only be released
+        // once the camera has stopped rendering to it, i.e., after the camera has closed
+        final SurfaceTexture texture_to_release = background_recording_texture;
+        background_recording_texture = null;
+        this.closeCamera(use_background_thread, texture_to_release == null ? null : new CloseCameraCallback() {
+            @Override
+            public void onClosed() {
+                if( MyDebug.LOG )
+                    Log.d(TAG, "release background recording surface texture");
+                texture_to_release.release();
+            }
+        });
         cameraSurface.onPause();
         if( canvasView != null )
             canvasView.onPause();
@@ -7495,6 +7546,15 @@ public class Preview implements SurfaceHolder.Callback, TextureView.SurfaceTextu
             else {
                 Log.e(TAG, "onResume: state is CAMERAOPENSTATE_CLOSING, but close_camera_task is null");
             }
+        }
+
+        if( background_recording_texture != null ) {
+            // texture that was kept alive for background video recording, and never reattached to
+            // the TextureView - camera is closed (or being freed by the OS) at this point
+            if( MyDebug.LOG )
+                Log.d(TAG, "release background recording surface texture in onDestroy");
+            background_recording_texture.release();
+            background_recording_texture = null;
         }
     }
 

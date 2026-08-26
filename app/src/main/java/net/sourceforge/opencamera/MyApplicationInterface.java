@@ -1928,6 +1928,8 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     public void startedVideo() {
         if( MyDebug.LOG )
             Log.d(TAG, "startedVideo()");
+        // keep recording alive if the app goes into the background or the screen turns off
+        main_activity.startVideoRecordingService();
         if( Build.VERSION.SDK_INT >= Build.VERSION_CODES.N ) {
             if( !( main_activity.getMainUI().inImmersiveMode() && main_activity.usingKitKatImmersiveModeEverything() ) ) {
                 View pauseVideoButton = main_activity.findViewById(R.id.pause_video);
@@ -2198,6 +2200,7 @@ public class MyApplicationInterface extends BasicApplicationInterface {
     public void stoppingVideo() {
         if( MyDebug.LOG )
             Log.d(TAG, "stoppingVideo()");
+        main_activity.stopVideoRecordingService();
         main_activity.unlockScreen();
         ImageButton view = main_activity.findViewById(R.id.take_photo);
         view.setImageResource(R.drawable.take_video_selector);
